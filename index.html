@@ -1,0 +1,292 @@
+
+<html>
+    <head>
+        <style>
+            span{
+                font-weight:900;
+            }
+        </style>
+    </head>
+    <body>
+        <script>
+
+class Users {
+    constructor() {
+        this.users_by_id = {};
+        this.users_by_name = {};
+    }
+    async downloadList() {
+        const name_list_url = "https://api.bar-rts.com/cached-users"
+        const usernames = await fetch(name_list_url)
+            .then(response => response.json())
+            .catch( error => console.log(error.message))
+        
+        for(var i=0;i<usernames.length;i++){
+            this.users_by_id[usernames[i]["id"]] = usernames[i]["username"]
+        }
+    }
+    getUserId(name){
+        if( name == "Raghna"){return 694}
+        if( name == "[teh]Flow"){return 112}
+        if (this.users_by_name[name] === undefined){
+            
+            for (const [key, value] of Object.entries(this.users_by_id)) {
+                if(value == name){
+                    this.users_by_name[name] = key
+                    return key
+                }                
+            }
+
+            console.log("Couldn't find user by name", name)
+            return -1
+        }
+        return this.users_by_name[name] 
+    }
+    getUserName(id){
+        if (this.users_by_id[id] === undefined){
+            console.log("Couldn't find user by id", id)
+            return "UNFOUND"
+        }
+        return this.users_by_id[id]
+    }
+}
+
+class Matches {
+    constructor(){
+        this.matches = {}
+    }
+    async getUserMatchList(name){
+        var user_matches_url = 'https://api.bar-rts.com/replays?page=1&limit=100000&hasBots=false&endedNormally=true&preset=team&players='+name+'&date=2023-06-01&date=3024-06-30'
+        //var user_matches_url = 'https://api.bar-rts.com/replays?page=1&limit=100000&hasBots=false&endedNormally=true&preset=team&players='+name+'&date=2020-06-01&date=3024-06-30'
+        //var user_matches_url = 'https://api.bar-rts.com/replays?page=1&limit=100000&hasBots=false&endedNormally=true&players='+name+'&date=2023-06-30&date=3024-06-30'
+        var match_ids = []
+        console.log("getting matches for "+ name)
+        const match_list = await fetch(user_matches_url)
+            .then(response => response.json())
+            .catch( error => console.log(error.message))
+        for (var x in match_list["data"]){
+            match_ids.push(match_list["data"][x]["id"])
+        }
+        return match_ids
+    }
+    async downloadMatch(id) {
+        //console.log("getting match ", id)
+        const match_url = "https://api.bar-rts.com/replays/"+id
+
+        const match_data = await fetch(match_url)
+            .then(response => response.json())
+            .catch( error => console.log(error.message))
+        //console.log(match_data)
+        
+        this.matches[id] = {
+            "map" : match_data["Map"]["scriptName"],
+            "team1players" : match_data["AllyTeams"][0]["Players"].map(x => [x["userId"], x["faction"]=="Armada"?0:1]),
+            "team2players" : match_data["AllyTeams"][1]["Players"].map(x => [x["userId"], x["faction"]=="Armada"?0:1]),
+            "team1won" : (match_data["AllyTeams"][0]["winningTeam"])?1:0,
+            "duration" : match_data["durationMs"],
+            "teamsize" : match_data["AllyTeams"][0]["Players"].length,
+        }
+        localStorage.setItem(id, JSON.stringify(this.matches[id]))
+        //console.log(this.matches[id])
+    }
+    async getMatch(id) {
+        if (this.matches[id] === undefined){
+            const stored_match = localStorage.getItem(id);
+            if (stored_match == null){
+                await this.downloadMatch(id)
+            }else{
+                this.matches[id] = JSON.parse(stored_match)
+                
+            }
+            
+        }
+        return this.matches[id]
+    }
+    
+}
+
+const users = new Users()
+users.downloadList()
+async function test(search_user){
+    const matches = new Matches()
+    const search_user_id = users.getUserId(search_user)
+    const match_id_list = await matches.getUserMatchList(search_user)
+    console.log(match_id_list)
+    if (match_id_list.length <1){
+        document.getElementById("header").innerHTML = "No matchs found for "+search_user
+        return
+    }
+
+    document.getElementById("header").innerHTML = "Getting match data for "+match_id_list.length+ " matches. Can take a few seconds up to several decades."
+
+    var match_list = await Promise.all(match_id_list.map(async id => {
+        return await matches.getMatch(id);
+    }));
+    console.log(match_list)
+
+    var maps_stats = {}
+    var faction_stats = [[0, 0],[0, 0]]
+    var teamates_stats = {}
+    var enemies_stats = {}
+
+
+    for(var i=0;i<match_list.length;i++){
+        match = match_list[i]
+        if (match.team1won){
+            var wonteam = match["team1players"]
+            var lossteam = match["team2players"]
+        }else{
+            var wonteam = match["team2players"]
+            var lossteam = match["team1players"]
+        }
+        var user_won = false
+        for(player of wonteam){
+            var [player_id, faction] = player;
+            if(player_id == search_user_id){
+                user_won = true
+            }
+        }
+        if (maps_stats[match["map"]] === undefined){
+            maps_stats[match["map"]] = [0, 0]
+        }
+        maps_stats[match["map"]][0] += 1
+        if(user_won){
+            maps_stats[match["map"]][1] += 1
+        }
+        for(player of wonteam){
+            var [player_id, faction] = player;
+            if(player_id == search_user_id){
+                faction_stats[faction][0]+=1
+                faction_stats[faction][1]+=1
+            }else{
+                if(user_won){
+                    if (teamates_stats[player_id] === undefined){teamates_stats[player_id] = [0, 0]}
+                    teamates_stats[player_id][0]+=1
+                    teamates_stats[player_id][1]+=1
+                }else{
+                    if (enemies_stats[player_id] === undefined){enemies_stats[player_id] = [0, 0]}
+                    enemies_stats[player_id][0]+=1
+                }
+            }
+        }
+        for(player of lossteam){
+            var [player_id, faction] = player;
+            if(player_id == search_user_id){
+                faction_stats[faction][0]+=1
+            }else{
+                if(user_won){
+                    if (enemies_stats[player_id] === undefined){enemies_stats[player_id] = [0, 0]}
+                    enemies_stats[player_id][0]+=1
+                    enemies_stats[player_id][1]+=1
+                }else{
+                    if (teamates_stats[player_id] === undefined){teamates_stats[player_id] = [0, 0]}
+                    teamates_stats[player_id][0]+=1
+                }
+            }
+        }
+
+    }
+    // console.log("faction stats", faction_stats)
+    // console.log("map stats", maps_stats)
+    // console.log("teamate stats", teamates_stats)
+    // console.log("enemy stats", enemies_stats)
+
+    armada_stats = faction_stats[0]
+    cortex_stats = faction_stats[1]
+    document.getElementById("totalgames").innerHTML = armada_stats[0]+cortex_stats[0]
+
+    document.getElementById("atotal").innerHTML = armada_stats[0]
+    document.getElementById("awins").innerHTML = armada_stats[1]
+    document.getElementById("arate").innerHTML = armada_stats[0]==0?0:(armada_stats[1]/armada_stats[0]*100).toFixed(2)
+
+    document.getElementById("ctotal").innerHTML = cortex_stats[0]
+    document.getElementById("cwins").innerHTML = cortex_stats[1]
+    document.getElementById("crate").innerHTML = cortex_stats[0]==0?0:(cortex_stats[1]/cortex_stats[0]*100).toFixed(2)
+
+    map_stats_list = []
+    for (const [key, value] of Object.entries(maps_stats)) {
+        map_stats_list.push([parseInt(value[0]), parseInt(value[1]), ((value[0]==0)?0:(value[1]/value[0]*100).toFixed(2)), key ])
+        
+    }
+    map_stats_list.sort((a, b) => b[0] - a[0])
+    var map_html = [""]
+    for (map_stat of map_stats_list) {
+        document.getElementById("maps").innerHTML += "<tr><td>"+map_stat[3]+"</td><td>"+map_stat[0]+"</td><td>"+map_stat[1]+"</td><td>"+map_stat[2]+"%</td></tr>"
+
+
+        
+    }
+    
+
+
+
+    var bla = []
+    for (const [key, value] of Object.entries(teamates_stats)) {
+        var [total, wins] = value
+        if (total > 4){
+            if(wins == 0){
+                bla.push([0, total, wins, users.getUserName(key)])
+            }else{
+                bla.push([wins/total, total, wins, users.getUserName(key)])
+            }
+        }
+        
+    }
+    bla.sort((a, b) => b[0] - a[0])
+    document.getElementById("bestt").innerHTML = bla[0][3]
+    document.getElementById("gamest").innerHTML = bla[0][1]
+    document.getElementById("ratet").innerHTML = (bla[0][1]==0)?0:(bla[0][2]/bla[0][1]*100).toFixed(2)
+
+
+    var bla = []
+    for (const [key, value] of Object.entries(enemies_stats)) {
+        var [total, wins] = value
+        if (total > 4){
+            if(wins == 0){
+                bla.push([0, total, wins, users.getUserName(key)])
+            }else{
+                bla.push([wins/total, total, wins, users.getUserName(key)])
+            }
+        }
+        
+    }
+    bla.sort((a, b) => a[0] - b[0])
+    document.getElementById("beste").innerHTML = bla[0][3]
+    document.getElementById("gamese").innerHTML = bla[0][1]
+    document.getElementById("ratee").innerHTML = (bla[0][1]==0)?0:(bla[0][2]/bla[0][1]*100).toFixed(2)
+    document.getElementById("header").innerHTML = "Stats for "+search_user+" that prove they are a lobster."
+}
+function load_stats(){
+    box = document.getElementById("input_box")
+    name = box.value
+    document.getElementById("header").innerHTML = "Loading..."
+    test(name)
+}
+//test()
+        </script>
+        <h1>Check Stats For: <input type="text" id="input_box"></input><input type="button" onclick="load_stats()" value="Load up stats op"></input></h1>
+<hr/>
+<center><h2><span id="header"></span></h2></center>
+<h2>Total Games: </h2><span id="totalgames">123</span><br/>
+<h2>Armada: </h2>Total Games: <span id="atotal">123</span> Games Won: <span id="awins">123</span> Winrate: <span id="arate">123</span>%<br/>
+<h2>Cortex: </h2>Total Games: <span id="ctotal">123</span> Games Won: <span id="cwins">123</span> Winrate: <span id="crate">123</span>%<br/>
+<h2>Best Teamate: </h2> <span id="bestt">123</span> Games with: <span id="gamest">123</span> Winrate: <span id="ratet">123</span>%<br/>
+<h2>Best Opponent: </h2> <span id="beste">123</span> Games against: <span id="gamese">123</span> Winrate: <span id="ratee">123</span>%<br/>
+<h2>Maps: </h2>
+<table id="maps">
+    <tr>
+      <th>Map Name</th>
+      <th>Games</th>
+      <th>Won</th>
+      <th>Winrate</th>
+    </tr>
+
+
+</table>
+
+<br/>
+
+        </div>
+        
+    </body>
+</html>
